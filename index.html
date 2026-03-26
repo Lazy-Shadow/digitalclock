@@ -52,11 +52,12 @@
                         <option value="UTC">UTC</option>
                     </select>
                 </div>
-                <div class="analog-clock">
-                    <div class="numbers" id="clockNumbers"></div>
-                    <div class="hand hour-hand" id="hourHand"></div>
-                    <div class="hand minute-hand" id="minuteHand"></div>
-                    <div class="hand second-hand" id="secondHand"></div>
+                <div class="earth-3d">
+                    <canvas id="earthCanvas"></canvas>
+                    <div class="zoom-controls">
+                        <button onclick="zoomIn()">+</button>
+                        <button onclick="zoomOut()">-</button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -204,6 +205,7 @@
     <!-- SOUND -->
     <audio id="alarmSound" src="audio/iPhone-Alarm-Original.mp3"></audio>
 
+    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 
     <script src="script.js"></script>

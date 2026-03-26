@@ -121,37 +121,11 @@ function showSection(sectionId, event) {
 
 /* ---------- ANALOG CLOCK ---------- */
 function updateAnalogClock() {
-  const now = new Date();
-  const hours = now.getHours() % 12;
-  const minutes = now.getMinutes();
-  const seconds = now.getSeconds();
-
-  const hourDeg = (hours * 30) + (minutes * 0.5);
-  const minuteDeg = minutes * 6;
-  const secondDeg = seconds * 6;
-
-  document.getElementById('hourHand').style.transform = `rotate(${hourDeg}deg)`;
-  document.getElementById('minuteHand').style.transform = `rotate(${minuteDeg}deg)`;
-  document.getElementById('secondHand').style.transform = `rotate(${secondDeg}deg)`;
+  // Disabled - using 3D Earth instead
 }
 
 function setClockNumbers() {
-  const numbersElem = document.getElementById('clockNumbers');
-  numbersElem.innerHTML = '';
-  const radius = 135;
-  const center = 150;
-  for (let i = 1; i <= 12; i++) {
-    const angle = (i * 30 - 90) * (Math.PI / 180);
-    const x = center + Math.cos(angle) * radius;
-    const y = center + Math.sin(angle) * radius;
-    const num = document.createElement('div');
-    num.textContent = i;
-    num.style.position = 'absolute';
-    num.style.left = `${x}px`;
-    num.style.top = `${y}px`;
-    num.style.transform = 'translate(-50%, -50%)';
-    numbersElem.appendChild(num);
-  }
+  // Clock numbers removed - using globe instead
 }
 
 /* ---------- DIGITAL CLOCK ---------- */
@@ -165,9 +139,88 @@ function updateClockDisplay() {
   document.getElementById('dateDisplay').innerText = date;
 }
 
+const timeZoneCoords = {
+    'local': null,
+    'America/New_York': { lat: 40.7128, lon: -74.0060 },
+    'America/Chicago': { lat: 41.8781, lon: -87.6298 },
+    'America/Denver': { lat: 39.7392, lon: -104.9903 },
+    'America/Los_Angeles': { lat: 34.0522, lon: -118.2437 },
+    'Europe/London': { lat: 51.5074, lon: -0.1278 },
+    'Europe/Paris': { lat: 48.8566, lon: 2.3522 },
+    'Asia/Tokyo': { lat: 35.6762, lon: 139.6503 },
+    'UTC': { lat: 51.4772, lon: 0.0 }
+};
+
 function updateTimeZone() {
-  currentTimeZone = document.getElementById('timeZoneSelect').value;
-  updateClockDisplay();
+    currentTimeZone = document.getElementById('timeZoneSelect').value;
+    updateClockDisplay();
+    
+    const coords = timeZoneCoords[currentTimeZone];
+    if (coords && earthScene) {
+        zoomToLocation(coords.lat, coords.lon);
+    }
+}
+
+function zoomToLocation(lat, lon) {
+    if (!earthMesh || !earthCamera) return;
+    
+    // Hide auto rotate
+    autoRotate = false;
+    
+    // Calculate target rotation
+    const targetLon = -lon * (Math.PI / 180);
+    const targetLat = lat * (Math.PI / 180);
+    
+    // Animate rotation
+    const startRotation = { x: earthMesh.rotation.x, y: earthMesh.rotation.y };
+    let progress = 0;
+    
+    const animateRotation = setInterval(() => {
+        progress += 0.03;
+        if (progress >= 1) {
+            clearInterval(animateRotation);
+            return;
+        }
+        const eased = 1 - Math.pow(1 - progress, 3);
+        earthMesh.rotation.y = startRotation.y + (targetLon - startRotation.y) * eased;
+        earthMesh.rotation.x = startRotation.x + (targetLat * 0.5 - startRotation.x) * eased;
+    }, 16);
+    
+    // Update marker
+    if (earthMarker) {
+        earthMarker.visible = true;
+        const position = latLonToVector3(lat, lon, 1.55);
+        earthMarker.position.copy(position);
+        earthMarker.lookAt(0, 0, 0);
+    }
+    
+    // Zoom in effect
+    animateZoom(5, 3);
+}
+
+function zoomIn() {
+    if (earthCamera) {
+        earthCamera.position.z = Math.max(2, earthCamera.position.z - 0.8);
+    }
+}
+
+function zoomOut() {
+    if (earthCamera) {
+        earthCamera.position.z = Math.min(10, earthCamera.position.z + 0.8);
+    }
+}
+
+function animateZoom(from, to) {
+    let progress = 0;
+    const zoomInterval = setInterval(() => {
+        progress += 0.03;
+        if (progress >= 1) {
+            clearInterval(zoomInterval);
+            return;
+        }
+        const eased = 1 - Math.pow(1 - progress, 3);
+        earthCamera.position.z = from + (to - from) * eased;
+    }, 16);
 }
 
 /* ---------- ALARM ---------- */
@@ -429,12 +482,12 @@ function lapSW() {
 }
 
 /* ---------- CLOCK UPDATES ---------- */
-setClockNumbers();
 updateClockDisplay();
-updateAnalogClock();
 hideAlarmNotification();
-setInterval(updateAnalogClock, 1000);
 setInterval(updateClockDisplay, 1000);
+
+// 3D Earth renderer - initialize after DOM loads
+document.addEventListener('DOMContentLoaded', init3DEarth);
 
 // Cleanup stray text nodes under body (fixes random text appearing under page)
 document.addEventListener('DOMContentLoaded', () => {
@@ -661,3 +714,234 @@ setInterval(() => {
     }
   });
 }, 1000);
+
+/* ---------- 3D EARTH MAP ---------- */
+let earthScene, earthCamera, earthRenderer, earthMesh, earthAtmosphere, earthMarker;
+let isDragging = false, previousMousePosition = { x: 0, y: 0 };
+let autoRotate = false; // Default to no auto rotation
+let currentLat = 0, currentLon = 0;
+
+function latLonToVector3(lat, lon, radius) {
+    const phi = (90 - lat) * (Math.PI / 180);
+    const theta = (lon + 180) * (Math.PI / 180);
+    const x = -radius * Math.sin(phi) * Math.cos(theta);
+    const y = radius * Math.cos(phi);
+    const z = radius * Math.sin(phi) * Math.sin(theta);
+    return new THREE.Vector3(x, y, z);
+}
+
+function init3DEarth() {
+    const canvas = document.getElementById('earthCanvas');
+    if (!canvas) return;
+    
+    const container = canvas.parentElement;
+    const width = container.clientWidth;
+    const height = container.clientHeight;
+    
+    earthScene = new THREE.Scene();
+    earthCamera = new THREE.PerspectiveCamera(45, width / height, 0.1, 1000);
+    earthCamera.position.z = 5;
+    
+    earthRenderer = new THREE.WebGLRenderer({ canvas, alpha: true, antialias: true });
+    earthRenderer.setSize(width, height);
+    earthRenderer.setPixelRatio(window.devicePixelRatio);
+    
+    // Earth sphere with day/night texture
+    const earthGeometry = new THREE.SphereGeometry(1.5, 64, 64);
+    const earthMaterial = new THREE.MeshPhongMaterial({
+        map: new THREE.TextureLoader().load('https://unpkg.com/three-globe/example/img/earth-blue-marble.jpg'),
+        bumpMap: new THREE.TextureLoader().load('https://unpkg.com/three-globe/example/img/earth-topology.png'),
+        bumpScale: 0.05,
+        specular: new THREE.Color(0x333333),
+        shininess: 5
+    });
+    earthMesh = new THREE.Mesh(earthGeometry, earthMaterial);
+    earthScene.add(earthMesh);
+    
+    // Atmosphere glow
+    const atmosphereGeometry = new THREE.SphereGeometry(1.6, 64, 64);
+    const atmosphereMaterial = new THREE.ShaderMaterial({
+        vertexShader: `
+            varying vec3 vNormal;
+            void main() {
+                vNormal = normalize(normalMatrix * normal);
+                gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+            }
+        `,
+        fragmentShader: `
+            varying vec3 vNormal;
+            void main() {
+                float intensity = pow(0.6 - dot(vNormal, vec3(0.0, 0.0, 1.0)), 2.0);
+                gl_FragColor = vec4(0.3, 0.6, 1.0, 1.0) * intensity;
+            }
+        `,
+        blending: THREE.AdditiveBlending,
+        side: THREE.BackSide,
+        transparent: true
+    });
+    earthAtmosphere = new THREE.Mesh(atmosphereGeometry, atmosphereMaterial);
+    earthScene.add(earthAtmosphere);
+    
+    // Location marker
+    const markerGeometry = new THREE.SphereGeometry(0.04, 16, 16);
+    const markerMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000 });
+    earthMarker = new THREE.Mesh(markerGeometry, markerMaterial);
+    earthMarker.visible = false;
+    earthScene.add(earthMarker);
+    
+    // Marker ring
+    const ringGeometry = new THREE.RingGeometry(0.05, 0.07, 32);
+    const ringMaterial = new THREE.MeshBasicMaterial({ color: 0xff0000, side: THREE.DoubleSide, transparent: true, opacity: 0.7 });
+    const markerRing = new THREE.Mesh(ringGeometry, ringMaterial);
+    earthMarker.add(markerRing);
+    
+    // Marker label
+    const labelDiv = document.createElement('div');
+    labelDiv.id = 'mapLabel';
+    labelDiv.style.cssText = 'position:absolute;background:rgba(0,0,0,0.7);color:white;padding:4px 8px;border-radius:4px;font-size:12px;pointer-events:none;display:none;';
+    container.appendChild(labelDiv);
+    
+    // Lights
+    const sunLight = new THREE.DirectionalLight(0xffffff, 1);
+    sunLight.position.set(5, 3, 5);
+    earthScene.add(sunLight);
+    
+    const ambientLight = new THREE.AmbientLight(0x404040, 0.5);
+    earthScene.add(ambientLight);
+    
+    // Stars
+    const starsGeometry = new THREE.BufferGeometry();
+    const starPositions = [];
+    for (let i = 0; i < 2000; i++) {
+        const x = (Math.random() - 0.5) * 100;
+        const y = (Math.random() - 0.5) * 100;
+        const z = (Math.random() - 0.5) * 100;
+        starPositions.push(x, y, z);
+    }
+    starsGeometry.setAttribute('position', new THREE.Float32BufferAttribute(starPositions, 3));
+    const starsMaterial = new THREE.PointsMaterial({ color: 0xffffff, size: 0.5 });
+    const stars = new THREE.Points(starsGeometry, starsMaterial);
+    earthScene.add(stars);
+    
+    // Get user location and place marker
+    if (navigator.geolocation) {
+        navigator.geolocation.getCurrentPosition((position) => {
+            currentLat = position.coords.latitude;
+            currentLon = position.coords.longitude;
+            updateMarker(currentLat, currentLon);
+        }, () => {
+            // Default to NYC if location denied
+            currentLat = 40.7128;
+            currentLon = -74.0060;
+            updateMarker(currentLat, currentLon);
+        });
+    }
+    
+    // Mouse controls
+    canvas.addEventListener('mousedown', (e) => { isDragging = true; });
+    canvas.addEventListener('mouseup', () => { isDragging = false; });
+    canvas.addEventListener('mousemove', (e) => {
+        if (isDragging) {
+            const deltaX = e.clientX - previousMousePosition.x;
+            const deltaY = e.clientY - previousMousePosition.y;
+            earthMesh.rotation.y += deltaX * 0.005;
+            earthMesh.rotation.x += deltaY * 0.005;
+        }
+        previousMousePosition = { x: e.clientX, y: e.clientY };
+    });
+    
+    // Click to get coordinates
+    canvas.addEventListener('click', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const x = ((e.clientX - rect.left) / rect.width) * 2 - 1;
+        const y = -((e.clientY - rect.top) / rect.height) * 2 + 1;
+        
+        const raycaster = new THREE.Raycaster();
+        raycaster.setFromCamera(new THREE.Vector2(x, y), earthCamera);
+        const intersects = raycaster.intersectObject(earthMesh);
+        
+        if (intersects.length > 0) {
+            const point = intersects[0].point;
+            const latLon = vector3ToLatLon(point);
+            currentLat = latLon.lat;
+            currentLon = latLon.lon;
+            updateMarker(currentLat, currentLon);
+            showCoordinates(currentLat, currentLon);
+        }
+    });
+    
+    // Mouse wheel zoom
+    canvas.addEventListener('wheel', (e) => {
+        e.preventDefault();
+        const zoomSpeed = 0.5;
+        earthCamera.position.z = Math.max(2, Math.min(10, earthCamera.position.z + (e.deltaY > 0 ? zoomSpeed : -zoomSpeed)));
+    }, { passive: false });
+    
+    // Touch controls
+    canvas.addEventListener('touchstart', (e) => { isDragging = true; });
+    canvas.addEventListener('touchend', () => { isDragging = false; });
+    canvas.addEventListener('touchmove', (e) => {
+        if (isDragging && e.touches.length === 1) {
+            const deltaX = e.touches[0].clientX - previousMousePosition.x;
+            const deltaY = e.touches[0].clientY - previousMousePosition.y;
+            earthMesh.rotation.y += deltaX * 0.005;
+            earthMesh.rotation.x += deltaY * 0.005;
+        }
+        previousMousePosition = { x: e.touches[0].clientX, y: e.touches[0].clientY };
+    });
+    
+    animateEarth();
+}
+
+function vector3ToLatLon(vector3) {
+    const radius = 1.5;
+    const lat = 90 - (Math.acos(vector3.y / radius) * 180 / Math.PI);
+    let lon = ((Math.atan2(vector3.x, vector3.z) * 180 / Math.PI) + 180) % 360 - 180;
+    return { lat, lon };
+}
+
+function updateMarker(lat, lon) {
+    if (!earthMarker) return;
+    earthMarker.visible = true;
+    const position = latLonToVector3(lat, lon, 1.55);
+    earthMarker.position.copy(position);
+    earthMarker.lookAt(0, 0, 0);
+    
+    // Rotate Earth to show location
+    const targetLon = -lon;
+    const targetLat = lat;
+    
+    // Animate to location
+    const startRotation = { x: earthMesh.rotation.x, y: earthMesh.rotation.y };
+    const targetRotation = { x: targetLat * 0.01, y: targetLon * (Math.PI / 180) };
+    
+    let progress = 0;
+    const animateToLocation = setInterval(() => {
+        progress += 0.05;
+        if (progress >= 1) {
+            clearInterval(animateToLocation);
+            return;
+        }
+        earthMesh.rotation.x = startRotation.x + (targetRotation.x - startRotation.x) * progress;
+        earthMesh.rotation.y = startRotation.y + (targetRotation.y - startRotation.y) * progress;
+    }, 16);
+    
+    autoRotate = false;
+    setTimeout(() => autoRotate = true, 5000);
+}
+
+function showCoordinates(lat, lon) {
+    const label = document.getElementById('mapLabel');
+    if (label) {
+        label.style.display = 'block';
+        label.textContent = `${lat.toFixed(4)}°, ${lon.toFixed(4)}°`;
+        setTimeout(() => { label.style.display = 'none'; }, 3000);
+    }
+}
+
+function animateEarth() {
+    requestAnimationFrame(animateEarth);
+    if (earthRenderer && earthScene && earthCamera) {
+        earthRenderer.render(earthScene, earthCamera);
+    }
+}
