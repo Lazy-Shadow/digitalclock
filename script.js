@@ -249,15 +249,9 @@ function renderWorldClockList() {
             }
         };
         
-        // Get icon for city based on its temperature/code if available, else default
-        const cityIcon = getWeatherIcon(city.weather_code || 0);
-        
         li.innerHTML = `
             <div class="world-clock-info">
-                <div style="display: flex; align-items: center; gap: 10px;">
-                    <div class="world-clock-icon">${cityIcon}</div>
-                    <span class="world-clock-city">${city.name}, ${gmtStr}</span>
-                </div>
+                <span class="world-clock-city">${city.name}, ${gmtStr}</span>
                 <span class="world-clock-details">
                     ${city.temp}° ${month} ${day}, ${offsetStr} ${timeStr}
                 </span>
